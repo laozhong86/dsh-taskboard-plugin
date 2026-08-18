@@ -10,8 +10,13 @@
 // react 为 peer external：esbuild CJS 输出把下面的 import 转为 require("react")，由宿主 ModuleLoader 注入。
 import { createElement, useEffect, useState } from "react";
 
-/** 客户端 cordis 服务依赖（服务名）：slots=视图页签/侧栏入口注册；sessions=「在对话中打开」（taskboard:open-thread → ctx.sessions.open，in-box workflow-run 同款）；layout=收起轨道图标钮先展开侧栏（ctx.layout.toggleSidebar，ui-sidebar 自身折叠钮同款调用）。 */
-export const inject = ["slots", "sessions", "layout"];
+/** 客户端 cordis 服务依赖（服务名）：slots=视图页签/侧栏入口注册；sessions=「在对话中打开」（taskboard:open-thread → ctx.sessions.open，in-box workflow-run 同款）；layout=收起轨道图标钮先展开侧栏（ctx.layout.toggleSidebar，ui-sidebar 自身折叠钮同款调用）；locale=侧栏入口标签按宿主语言显示。 */
+export const inject = ["slots", "sessions", "layout", "locale"];
+
+/** 侧栏入口本地化字典（与 dsh-omnimux 同款 NS + zh/en 结构）。 */
+const NS = "dsh-taskboard-plugin";
+const zh = { "nav.taskboard": "任务看板" };
+const en = { "nav.taskboard": "Taskboard" };
 
 /** ADR-12 约定默认端口（host 配置未覆盖时的回退值）。 */
 const DEFAULT_PORT = 47823;
@@ -386,16 +391,17 @@ function findNewSessionButton(root: HTMLElement): HTMLButtonElement | undefined 
 }
 
 /** 挂载任务看板侧栏入口，返回清理函数。 */
-function mountTaskboardEntry(ctx: any): () => void {
+function mountTaskboardEntry(ctx: any, t: (key: string) => string): () => void {
   injectTaskboardEntryStyles();
+  const label = t("nav.taskboard");
   const entry = document.createElement("button");
   entry.type = "button";
   entry.dataset.dshTaskboardEntry = "";
   entry.className = "dsh-taskboard-entry";
-  entry.setAttribute("aria-label", "Taskboard");
+  entry.setAttribute("aria-label", label);
   entry.innerHTML =
     `<span class="dsh-taskboard-entry-icon">${TASKBOARD_ICON_SVG}</span>` +
-    '<span class="dsh-taskboard-entry-label">Taskboard</span>';
+    `<span class="dsh-taskboard-entry-label">${label}</span>`;
   entry.addEventListener("click", () => openTaskboardView(ctx));
 
   let root: HTMLElement | undefined;
@@ -465,6 +471,8 @@ function mountTaskboardEntry(ctx: any): () => void {
  * 声明方重挂载/重建声明时按声明 epoch 自动重注册。
  */
 export function apply(ctx: any) {
+  ctx.effect(() => ctx.locale.register(NS, { zh, en }), "taskboard: dictionaries");
+  const t = ctx.locale.bind(NS);
   // 「在对话中打开」双协议桥（iframe → 宿主 postMessage，上游既有通道，DSH 前无宿主监听）：
   // · taskboard:open-thread {threadId}——打开已绑定会话：ctx.sessions.open（目标会话默认落在 chat 视图）。
   // · taskboard:create-thread {taskId, workspacePath,…}——新建 DSH 会话（sessions.create({cwd})，
@@ -567,5 +575,5 @@ export function apply(ctx: any) {
     return () => observer.disconnect();
   }, "taskboard: hide conversation view tab");
   // 侧栏入口挂到「新会话下方」（应用入口之后），替代底部 footer.action（OmniMux 布局需求）。
-  ctx.effect(() => mountTaskboardEntry(ctx), "taskboard: sidebar entry under new session");
+  ctx.effect(() => mountTaskboardEntry(ctx, t), "taskboard: sidebar entry under new session");
 }
