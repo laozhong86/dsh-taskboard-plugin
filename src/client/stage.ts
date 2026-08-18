@@ -5,6 +5,22 @@ const STAGE_ID = "taskboard";
 
 export function claimProductStage(id: string): void {
   window.dispatchEvent(new CustomEvent(PRODUCT_STAGE_EVENT, { detail: { id } }));
+  document.documentElement.dataset.dshProductStage = id;
+  ensureProductStageChrome();
+}
+
+export function releaseProductStage(id: string): void {
+  if (document.documentElement.dataset.dshProductStage === id) {
+    delete document.documentElement.dataset.dshProductStage;
+  }
+}
+
+function ensureProductStageChrome(): void {
+  if (document.getElementById("dsh-product-stage-chrome")) return;
+  const style = document.createElement("style");
+  style.id = "dsh-product-stage-chrome";
+  style.textContent = 'html[data-dsh-product-stage] [class*="toggleCluster"]{display:none!important;}';
+  document.head.append(style);
 }
 
 export function createTaskboardStore() {
@@ -35,6 +51,7 @@ export function createTaskboardStore() {
       if (open === next) return;
       open = next;
       if (open) claimProductStage(STAGE_ID);
+      else releaseProductStage(STAGE_ID);
       emit();
     },
     toggle() {
