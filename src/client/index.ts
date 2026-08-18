@@ -242,10 +242,8 @@ function BoardFrame(props: {
 }
 
 /**
- * 看板主区视图（conversation.view 占用者，官方 trajectory 同款接入）：
- * 顶部工具栏（↗ 在系统浏览器打开）+ BoardFrame（通道解析 → 探测 → iframe 直连 / 降级屏），
- * 外壳行为与 DOM 与拆分前完全一致。主题仅外壳跟随 DSH token——iframe 内部为 taskboard
- * 自有 UI，不跨源同步主题（已裁定）。
+ * 看板主区视图（conversation.view 占用者）：只渲染原生 iframe，不带插件外壳工具栏。
+ * 官方会话顶栏 / composer 由 apply() 里的 chrome 隐藏效果在看板激活时收起。
  */
 function TaskboardView() {
   const board = useTaskboardChannel();
@@ -262,38 +260,6 @@ function TaskboardView() {
         color: tokens.labelPrimary,
       },
     },
-    createElement(
-      "div",
-      {
-        style: {
-          display: "flex",
-          justifyContent: "flex-end",
-          alignItems: "center",
-          gap: 4,
-          padding: "4px 10px",
-          borderBottom: `1px solid ${tokens.borderL2}`,
-          fontSize: 12,
-          flex: "none",
-        },
-      },
-      createElement(
-        "button",
-        {
-          onClick: () => window.open(board.origin, "_blank", "noopener"),
-          title: "在系统浏览器打开",
-          style: {
-            cursor: "pointer",
-            border: "none",
-            background: "transparent",
-            color: tokens.labelSecondary,
-            fontSize: 12,
-            padding: "4px 8px",
-            borderRadius: 6,
-          },
-        },
-        "↗ 在系统浏览器打开",
-      ),
-    ),
     createElement(BoardFrame, { ...board, frameTitle: "Taskboard" }),
   );
 }
@@ -574,6 +540,23 @@ export function apply(ctx: any) {
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, "taskboard: hide conversation view tab");
+  // 看板激活时只留原生 iframe：收起官方会话顶栏（对话/轨迹/小队运行）和底部 composer。
+  ctx.effect(() => {
+    const id = "dsh-taskboard-chrome-hide";
+    if (document.getElementById(id)) return () => {};
+    const style = document.createElement("style");
+    style.id = id;
+    style.textContent = [
+      '[data-slot="conversation.session"]:has([data-taskboard-view]) [data-slot="conversation.session.header"],',
+      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_header"],',
+      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_composerSeat"],',
+      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_composerStack"],',
+      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_composerHero"]{display:none!important;}',
+      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_viewArea"]{flex:1 1 auto!important;min-height:0!important;}',
+    ].join("");
+    document.head.append(style);
+    return () => style.remove();
+  }, "taskboard: hide official session chrome");
   // 侧栏入口挂到「新会话下方」（应用入口之后），替代底部 footer.action（OmniMux 布局需求）。
   ctx.effect(() => mountTaskboardEntry(ctx, t), "taskboard: sidebar entry under new session");
 }
