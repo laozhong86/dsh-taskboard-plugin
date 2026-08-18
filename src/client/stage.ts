@@ -15,11 +15,22 @@ export function releaseProductStage(id: string): void {
   }
 }
 
-function ensureProductStageChrome(): void {
-  if (document.getElementById("dsh-product-stage-chrome")) return;
+export const PRODUCT_STAGE_CHROME = [
+  '[data-slot="shell.overlay"]{pointer-events:none!important;}',
+  'html:not([data-dsh-product-stage]) [class*="toggleCluster"],',
+  'html:not([data-dsh-product-stage]) [class*="toggleCluster"] *{pointer-events:auto!important;z-index:300!important;}',
+  'html[data-dsh-product-stage] [class*="toggleCluster"]{display:none!important;}',
+].join("");
+
+export function ensureProductStageChrome(): void {
+  const existing = document.getElementById("dsh-product-stage-chrome");
+  if (existing instanceof HTMLStyleElement) {
+    if (!existing.textContent?.includes("pointer-events:none")) existing.textContent = PRODUCT_STAGE_CHROME;
+    return;
+  }
   const style = document.createElement("style");
   style.id = "dsh-product-stage-chrome";
-  style.textContent = 'html[data-dsh-product-stage] [class*="toggleCluster"]{display:none!important;}';
+  style.textContent = PRODUCT_STAGE_CHROME;
   document.head.append(style);
 }
 

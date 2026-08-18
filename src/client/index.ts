@@ -9,7 +9,7 @@
 // 构建产物为 window.__ModuleLoader__.load({ id, factory: (require) => ... }) 包装（scripts/build.mjs）。
 // react 为 peer external：esbuild CJS 输出把下面的 import 转为 require("react")，由宿主 ModuleLoader 注入。
 import { createElement, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { createTaskboardStore, readConversationBox } from "./stage";
+import { createTaskboardStore, ensureProductStageChrome, readConversationBox } from "./stage";
 
 /** 客户端 cordis 服务依赖（服务名）：slots=视图页签/侧栏入口注册；sessions=「在对话中打开」（taskboard:open-thread → ctx.sessions.open，in-box workflow-run 同款）；layout=收起轨道图标钮先展开侧栏（ctx.layout.toggleSidebar，ui-sidebar 自身折叠钮同款调用）；locale=侧栏入口标签按宿主语言显示。 */
 export const inject = ["slots", "sessions", "locale"];
@@ -365,27 +365,35 @@ function findNewSessionButton(root: HTMLElement): HTMLButtonElement | undefined 
   ) as HTMLButtonElement | undefined;
 }
 
+function paintTaskboardLabel(entry: HTMLButtonElement, label: string): void {
+  entry.setAttribute("aria-label", label);
+  const node = entry.querySelector(".dsh-taskboard-entry-label");
+  if (node) node.textContent = label;
+}
+
 /** 挂载任务看板侧栏入口，返回清理函数。 */
 function mountTaskboardEntry(
   board: ReturnType<typeof createTaskboardStore>,
   t: (key: string) => string,
+  locale?: { subscribe?: (fn: () => void) => () => void },
 ): () => void {
   injectTaskboardEntryStyles();
-  const label = t("nav.taskboard");
   const entry = document.createElement("button");
   entry.type = "button";
   entry.dataset.dshTaskboardEntry = "";
   entry.className = "dsh-taskboard-entry";
-  entry.setAttribute("aria-label", label);
   entry.innerHTML =
     `<span class="dsh-taskboard-entry-icon">${TASKBOARD_ICON_SVG}</span>` +
-    `<span class="dsh-taskboard-entry-label">${label}</span>`;
+    `<span class="dsh-taskboard-entry-label"></span>`;
+  const paint = () => { paintTaskboardLabel(entry, t("nav.taskboard")); };
+  paint();
   entry.addEventListener("click", () => board.toggle());
   const syncActive = () => {
     if (board.getSnapshot()) entry.dataset.active = "true";
     else delete entry.dataset.active;
   };
   const unsubscribe = board.subscribe(syncActive);
+  const unsubscribeLocale = typeof locale?.subscribe === "function" ? locale.subscribe(paint) : () => {};
   syncActive();
 
   let root: HTMLElement | undefined;
@@ -447,6 +455,7 @@ function mountTaskboardEntry(
     waitObserver.disconnect();
     rootObserver.disconnect();
     unsubscribe();
+    unsubscribeLocale();
     entry.remove();
   };
 }
@@ -456,6 +465,10 @@ function mountTaskboardEntry(
  * 声明方重挂载/重建声明时按声明 epoch 自动重注册。
  */
 export function apply(ctx: any) {
+  ctx.effect(() => {
+    ensureProductStageChrome();
+    return () => {};
+  }, "taskboard: product-stage chrome");
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), "taskboard: dictionaries");
   const t = ctx.locale.bind(NS);
   const board = createTaskboardStore();
@@ -522,5 +535,5 @@ export function apply(ctx: any) {
       TaskboardStage,
     ),
   );
-  ctx.effect(() => mountTaskboardEntry(board, t), "taskboard: sidebar entry under new session");
+  ctx.effect(() => mountTaskboardEntry(board, t, ctx.locale), "taskboard: sidebar entry under new session");
 }
