@@ -325,7 +325,7 @@ function postToTaskboardFrame(message: Record<string, unknown>) {
  */
 const APPS_ENTRY_SELECTOR = '[data-dsh-omnimux-apps-entry]';
 const TASKBOARD_ICON_SVG =
-  '<svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true"><rect x="1.75" y="2" width="3.5" height="12" rx="1" fill="currentColor"/><rect x="6.25" y="2" width="3.5" height="8" rx="1" fill="currentColor"/><rect x="10.75" y="2" width="3.5" height="10" rx="1" fill="currentColor"/></svg>';
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><rect x="1.75" y="2" width="3.5" height="12" rx="1" fill="currentColor"/><rect x="6.25" y="2" width="3.5" height="8" rx="1" fill="currentColor"/><rect x="10.75" y="2" width="3.5" height="10" rx="1" fill="currentColor"/></svg>';
 
 function injectTaskboardEntryStyles(): void {
   if (document.getElementById("dsh-taskboard-entry-styles")) return;
@@ -337,8 +337,9 @@ function injectTaskboardEntryStyles(): void {
     "background:transparent;color:var(--dsw-alias-label-primary,inherit);",
     "font:var(--dsw-font-s-14,inherit);font-size:14px;line-height:20px;cursor:pointer;text-align:left;}",
     ".dsh-taskboard-entry:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}",
-    ".dsh-taskboard-entry svg{flex:none;width:16px;height:16px;}",
-    ".dsh-taskboard-entry-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+    ".dsh-taskboard-entry-icon{flex:none;display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center;}",
+    ".dsh-taskboard-entry svg{display:block;width:14px;height:14px;}",
+    ".dsh-taskboard-entry-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:20px;}",
   ].join("");
   document.head.append(style);
 }
