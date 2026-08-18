@@ -88,6 +88,11 @@ function buildChildEnv(port: number, dataDir: string): NodeJS.ProcessEnv {
     TASKBOARD_PORT: String(port),
     TASKBOARD_HOST: "127.0.0.1",
     TASKBOARD_DATA_DIR: dataDir,
+    // Electron shells (e.g. OmniMux) run the DSH host under the Electron binary,
+    // so `process.execPath` is not `node` and would refuse to run the vendored
+    // `.mjs` server. This flag makes Electron run the child as plain Node.
+    // Harmless under a plain Node runtime (node ignores the variable).
+    ELECTRON_RUN_AS_NODE: "1",
   };
   for (const key of CHILD_ENV_ALLOWLIST) {
     const value = process.env[key];
