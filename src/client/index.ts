@@ -8,10 +8,11 @@
 // ADR-12 嵌入路径 A（iframe 直连 http://127.0.0.1:<port>/，M4 已证 SSE 在线）。
 // 构建产物为 window.__ModuleLoader__.load({ id, factory: (require) => ... }) 包装（scripts/build.mjs）。
 // react 为 peer external：esbuild CJS 输出把下面的 import 转为 require("react")，由宿主 ModuleLoader 注入。
-import { createElement, useEffect, useState } from "react";
+import { createElement, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createTaskboardStore, readConversationBox } from "./stage";
 
 /** 客户端 cordis 服务依赖（服务名）：slots=视图页签/侧栏入口注册；sessions=「在对话中打开」（taskboard:open-thread → ctx.sessions.open，in-box workflow-run 同款）；layout=收起轨道图标钮先展开侧栏（ctx.layout.toggleSidebar，ui-sidebar 自身折叠钮同款调用）；locale=侧栏入口标签按宿主语言显示。 */
-export const inject = ["slots", "sessions", "layout", "locale"];
+export const inject = ["slots", "sessions", "locale"];
 
 /** 侧栏入口本地化字典（与 dsh-omnimux 同款 NS + zh/en 结构）。 */
 const NS = "dsh-taskboard-plugin";
@@ -242,65 +243,72 @@ function BoardFrame(props: {
 }
 
 /**
- * 看板主区视图（conversation.view 占用者）：只渲染原生 iframe，不带插件外壳工具栏。
- * 官方会话顶栏 / composer 由 apply() 里的 chrome 隐藏效果在看板激活时收起。
+ * Independent first-level page (shell.overlay), not a session view.
+ * Covers the whole conversation column so session header / composer stay underneath.
  */
-function TaskboardView() {
-  const board = useTaskboardChannel();
+function TaskboardStage(props: {
+  t: (key: string) => string;
+  board: ReturnType<typeof createTaskboardStore>;
+  useSessions?: (select: (state: { current?: string }) => unknown) => unknown;
+}) {
+  const { t, board, useSessions } = props;
+  const open = useSyncExternalStore(
+    board ? board.subscribe : () => () => {},
+    board ? board.getSnapshot : () => false,
+  );
+  const channel = useTaskboardChannel();
+  const readSessions = useSessions ?? ((select) => select({}));
+  const currentSession = readSessions((state) => state.current);
+  const [box, setBox] = useState(() => readConversationBox());
+  const lastSession = useRef(currentSession);
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const update = () => {
+      setBox(readConversationBox());
+    };
+    update();
+    const target = document.querySelector('[data-slot="conversation"]')?.parentElement
+      ?? document.querySelector("[data-conversation-scroll]");
+    const observer = typeof ResizeObserver === "function" && target instanceof Element
+      ? new ResizeObserver(update)
+      : null;
+    if (target && observer) observer.observe(target);
+    window.addEventListener("resize", update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (open && lastSession.current !== currentSession) board?.set(false);
+    lastSession.current = currentSession;
+  }, [board, currentSession, open]);
+
+  if (!open || !board) return null;
   return createElement(
     "div",
     {
-      "data-taskboard-view": true,
+      role: "region",
+      "aria-label": t("nav.taskboard"),
+      "data-taskboard-stage": true,
       style: {
-        height: "100%",
-        minHeight: 0,
+        position: "fixed",
+        top: box.top,
+        left: box.left,
+        width: box.width,
+        height: box.height,
+        zIndex: 20,
+        pointerEvents: "auto",
         display: "flex",
         flexDirection: "column",
         background: tokens.bgBase,
         color: tokens.labelPrimary,
       },
     },
-    createElement(BoardFrame, { ...board, frameTitle: "Taskboard" }),
+    createElement(BoardFrame, { ...channel, frameTitle: "Taskboard" }),
   );
-}
-
-/**
- * 找到会话头部的 Taskboard 视图页签按钮（conversation.view 占用者；已被 observer display:none，
- * 但仍在 DOM 且程序化 .click() 照常派发 React 合成事件）。按自身注册的固定 label 文本匹配，
- * 与侧栏快捷行（非 role=tab）不冲突。
- */
-function findTaskboardTabButton(): HTMLButtonElement | null {
-  const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('button[role="tab"]'));
-  return tabs.find((button) => button.textContent?.trim() === "Taskboard") ?? null;
-}
-
-/**
- * 打开看板主区视图：点击（隐藏的）会话页签——与用户手点完全同一条 ui-conversation 激活路径
- * （actions.setView("taskboard")，视图状态随会话 store 持久化）。无页签（尚无打开的会话）时先新建
- * 会话再轮询等其头部渲染出来点击（与 taskboard:create-thread 桥的 create→open 同款链路）。
- */
-function openTaskboardView(ctx: any) {
-  const tab = findTaskboardTabButton();
-  if (tab !== null) {
-    tab.click();
-    return;
-  }
-  void (async () => {
-    try {
-      const threadId = await ctx.sessions.create({});
-      ctx.sessions.open(threadId);
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        const pending = findTaskboardTabButton();
-        if (pending !== null) {
-          pending.click();
-          return;
-        }
-      }
-    } catch {
-      // 新建会话失败则静默放弃（下次点击重试）。
-    }
-  })();
 }
 
 /** 宿主 → iframe 的 ack 通道（thread-prepared / thread-create-error，App.tsx receiveHostMessage 既有协议）。 */
@@ -357,7 +365,10 @@ function findNewSessionButton(root: HTMLElement): HTMLButtonElement | undefined 
 }
 
 /** 挂载任务看板侧栏入口，返回清理函数。 */
-function mountTaskboardEntry(ctx: any, t: (key: string) => string): () => void {
+function mountTaskboardEntry(
+  board: ReturnType<typeof createTaskboardStore>,
+  t: (key: string) => string,
+): () => void {
   injectTaskboardEntryStyles();
   const label = t("nav.taskboard");
   const entry = document.createElement("button");
@@ -368,7 +379,13 @@ function mountTaskboardEntry(ctx: any, t: (key: string) => string): () => void {
   entry.innerHTML =
     `<span class="dsh-taskboard-entry-icon">${TASKBOARD_ICON_SVG}</span>` +
     `<span class="dsh-taskboard-entry-label">${label}</span>`;
-  entry.addEventListener("click", () => openTaskboardView(ctx));
+  entry.addEventListener("click", () => board.toggle());
+  const syncActive = () => {
+    if (board.getSnapshot()) entry.dataset.active = "true";
+    else delete entry.dataset.active;
+  };
+  const unsubscribe = board.subscribe(syncActive);
+  syncActive();
 
   let root: HTMLElement | undefined;
   let placed = false;
@@ -428,6 +445,7 @@ function mountTaskboardEntry(ctx: any, t: (key: string) => string): () => void {
     clearInterval(retry);
     waitObserver.disconnect();
     rootObserver.disconnect();
+    unsubscribe();
     entry.remove();
   };
 }
@@ -439,6 +457,7 @@ function mountTaskboardEntry(ctx: any, t: (key: string) => string): () => void {
 export function apply(ctx: any) {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), "taskboard: dictionaries");
   const t = ctx.locale.bind(NS);
+  const board = createTaskboardStore();
   // 「在对话中打开」双协议桥（iframe → 宿主 postMessage，上游既有通道，DSH 前无宿主监听）：
   // · taskboard:open-thread {threadId}——打开已绑定会话：ctx.sessions.open（目标会话默认落在 chat 视图）。
   // · taskboard:create-thread {taskId, workspacePath,…}——新建 DSH 会话（sessions.create({cwd})，
@@ -454,6 +473,7 @@ export function apply(ctx: any) {
       if (data.type === "taskboard:open-thread") {
         const threadId = typeof data.payload?.threadId === "string" ? data.payload.threadId.trim() : "";
         if (!threadId) return;
+        board.set(false);
         ctx.sessions.open(threadId);
         return;
       }
@@ -473,6 +493,7 @@ export function apply(ctx: any) {
             });
             if (!bind.ok) throw new Error(`bind-task ${bind.status}`);
             postToTaskboardFrame({ type: "taskboard:thread-prepared", payload: { taskId, threadId } });
+            board.set(false);
             ctx.sessions.open(threadId);
           } catch (error) {
             postToTaskboardFrame({
@@ -488,75 +509,17 @@ export function apply(ctx: any) {
       window.removeEventListener("message", onMessage);
     };
   }, "taskboard: open-thread bridge");
-  // 官方主区视图（trajectory 同款）：conversation.view 注册保留——看板画面仍由 ui-conversation 的
-  // 视图机器整页渲染（铺满 conversation 列）；但按需求入口不再以页签形式出现（下方 observer 隐藏），
-  // 激活走侧栏快捷方式的程序化点击，切回用可见的 对话/轨迹 页签。
-  ctx.slots.inject("conversation.view", () =>
+  ctx.slots.inject("shell.overlay", () =>
     ctx.slots.register(
-      { name: "conversation.view", id: "taskboard", order: 20, label: () => "Taskboard" },
-      TaskboardView,
+      {
+        name: "shell.overlay",
+        id: "taskboard-stage",
+        order: 22,
+        locale: NS,
+        inject: () => ({ t, board }),
+      },
+      TaskboardStage,
     ),
   );
-  // 会话行点击落回对话视图：ui-workspace 的会话行/搜索结果行为 [role="treeitem"][aria-selected]
-  // （文件夹行是 aria-expanded，天然排除）。点击已选中的会话行对宿主是 no-op——若该会话停在
-  // 看板视图，画面毫无反应（用户实测卡点）；切到别的会话时也可能落在其记忆的看板视图上。
-  // 语义对齐用户心智：会话列表点进去就是聊天，看板只从侧栏快捷方式进——点击行后若当前
-  // 激活视图仍是看板，程序化点回第一个可见页签（对话，order 0；轨迹视图不受影响）。
-  // 双时段复核（60ms/250ms）：切会话后头部页签异步重挂，早查可能读到旧会话 DOM。
-  ctx.effect(() => {
-    const resetIfBoardActive = () => {
-      const tabs = Array.from(document.querySelectorAll<HTMLButtonElement>('button[role="tab"]'));
-      const board = tabs.find((button) => button.textContent?.trim() === "Taskboard");
-      if (board === undefined || board.getAttribute("aria-selected") !== "true") return;
-      const chat = tabs.find(
-        (button) => button !== board && button.textContent?.trim() !== "Taskboard",
-      );
-      chat?.click();
-    };
-    const onClick = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target === null) return;
-      const row = target.closest<HTMLElement>('[role="treeitem"][aria-selected]');
-      if (row === null) return;
-      // 行内按钮（… 菜单等）不视为打开会话，交给宿主自身处理。
-      if (target.closest("button") !== null) return;
-      window.setTimeout(resetIfBoardActive, 60);
-      window.setTimeout(resetIfBoardActive, 250);
-    };
-    document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
-  }, "taskboard: session row click resets board view");
-  // 页签隐藏：宿主 viewTabs() 会把 conversation.view 全部占用者列进页签环、无官方隐藏选项——
-  // DOM 层把文本为 "Taskboard" 的 role=tab 按钮 display:none（React 不管理该按钮的 inline style，
-  // 重挂载/切会话由 observer 兜底重隐）。隐藏不影响程序化 .click()（事件照常派发到 React 根）。
-  ctx.effect(() => {
-    const hide = () => {
-      document.querySelectorAll<HTMLButtonElement>('button[role="tab"]').forEach((button) => {
-        if (button.textContent?.trim() === "Taskboard") button.style.display = "none";
-      });
-    };
-    hide();
-    const observer = new MutationObserver(hide);
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, "taskboard: hide conversation view tab");
-  // 看板激活时只留原生 iframe：收起官方会话顶栏（对话/轨迹/小队运行）和底部 composer。
-  ctx.effect(() => {
-    const id = "dsh-taskboard-chrome-hide";
-    if (document.getElementById(id)) return () => {};
-    const style = document.createElement("style");
-    style.id = id;
-    style.textContent = [
-      '[data-slot="conversation.session"]:has([data-taskboard-view]) [data-slot="conversation.session.header"],',
-      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_header"],',
-      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_composerSeat"],',
-      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_composerStack"],',
-      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_composerHero"]{display:none!important;}',
-      '[data-slot="conversation.session"]:has([data-taskboard-view]) [class*="_viewArea"]{flex:1 1 auto!important;min-height:0!important;}',
-    ].join("");
-    document.head.append(style);
-    return () => style.remove();
-  }, "taskboard: hide official session chrome");
-  // 侧栏入口挂到「新会话下方」（应用入口之后），替代底部 footer.action（OmniMux 布局需求）。
-  ctx.effect(() => mountTaskboardEntry(ctx, t), "taskboard: sidebar entry under new session");
+  ctx.effect(() => mountTaskboardEntry(board, t), "taskboard: sidebar entry under new session");
 }
