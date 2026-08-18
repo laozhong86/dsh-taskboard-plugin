@@ -293,24 +293,6 @@ function TaskboardView() {
   );
 }
 
-/** 内联三列看板图标（dsh-client-ui-primitives 不在本 bundle 的 external 面里，故自绘；currentColor 跟随宿主 token 颜色）。 */
-function KanbanIcon(props: { size: number }) {
-  return createElement(
-    "svg",
-    {
-      width: props.size,
-      height: props.size,
-      viewBox: "0 0 16 16",
-      fill: "none",
-      "aria-hidden": true,
-      style: { flex: "none", display: "block" },
-    },
-    createElement("rect", { x: 1.75, y: 2, width: 3.5, height: 12, rx: 1, fill: "currentColor" }),
-    createElement("rect", { x: 6.25, y: 2, width: 3.5, height: 8, rx: 1, fill: "currentColor" }),
-    createElement("rect", { x: 10.75, y: 2, width: 3.5, height: 10, rx: 1, fill: "currentColor" }),
-  );
-}
-
 /**
  * 找到会话头部的 Taskboard 视图页签按钮（conversation.view 占用者；已被 observer display:none，
  * 但仍在 DOM 且程序化 .click() 照常派发 React 合成事件）。按自身注册的固定 label 文本匹配，
@@ -350,75 +332,132 @@ function openTaskboardView(ctx: any) {
   })();
 }
 
-/**
- * 侧栏底部快捷入口（sidebar.footer.action 占用者，渲染于 Settings 按钮正上方；cordis-panel 同款）：
- * 纯快捷方式（图标+文字），自身不含任何面板——点击经 onOpen 把当前会话切到看板主区视图
- * （画面铺满右侧 conversation 列，与会话页签同款渲染）。
- * · wide=true（展开侧栏）：紧凑行按钮（看板图标 + Taskboard 文字）；
- * · wide=false（56px 收起轨道）：仅图标圆钮——点击先 onExpandRail()（注册处闭包
- *   ctx.layout.toggleSidebar 展开侧栏）再 onOpen() 切换视图。
- */
-function TaskboardSidebarEntry(props: { wide?: boolean; onOpen: () => void; onExpandRail: () => void }) {
-  if (props.wide === false) {
-    return createElement(
-      "button",
-      {
-        // 复用 ui-sidebar 自有 iconButton 样式（28x28，收起态由其 CSS 放大到 36x36，含 hover 底色）；
-        // 该类名是其 CSS module 构建产物名，跨宿主版本不保证稳定，故内联等值样式兜底（本分支只在收起轨道渲染，恒为 36x36）。
-        className: "hHd-Xa_iconButton",
-        onClick: () => {
-          props.onExpandRail();
-          props.onOpen();
-        },
-        title: "Taskboard",
-        "aria-label": "Taskboard",
-        style: {
-          cursor: "pointer",
-          width: 36,
-          height: 36,
-          border: "none",
-          background: "transparent",
-          borderRadius: "50%",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 0,
-          color: tokens.labelSecondary,
-          flex: "none",
-        },
-      },
-      createElement(KanbanIcon, { size: 18 }),
-    );
-  }
-  return createElement(
-    "button",
-    {
-      onClick: () => props.onOpen(),
-      style: {
-        width: "100%",
-        boxSizing: "border-box",
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "5px 8px",
-        cursor: "pointer",
-        border: "none",
-        background: "transparent",
-        color: tokens.labelPrimary,
-        fontSize: 12,
-        borderRadius: 6,
-        textAlign: "left",
-      },
-    },
-    createElement(KanbanIcon, { size: 14 }),
-    createElement("span", { style: { flex: 1, minWidth: 0 } }, "Taskboard"),
-  );
-}
-
 /** 宿主 → iframe 的 ack 通道（thread-prepared / thread-create-error，App.tsx receiveHostMessage 既有协议）。 */
 function postToTaskboardFrame(message: Record<string, unknown>) {
   const frame = document.querySelector('iframe[title="Taskboard"]') as HTMLIFrameElement | null;
   frame?.contentWindow?.postMessage(message, "*");
+}
+
+/**
+ * 侧栏「新会话下方」入口（DOM 注入，替代 sidebar.footer.action）。
+ * OmniMux 期望「应用」与「任务看板」都挂在新会话下方：应用入口由 dsh-omnimux 以
+ * [data-dsh-omnimux-apps-entry] 挂在新会话正下方，本入口插到它之后（任务排在应用之下）；
+ * 应用尚未挂载时退化为紧跟新会话。observer + 2s 重试自愈，与 dsh-omnimux 同款挂法。
+ */
+const APPS_ENTRY_SELECTOR = '[data-dsh-omnimux-apps-entry]';
+const TASKBOARD_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><rect x="1.75" y="2" width="3.5" height="12" rx="1" fill="currentColor"/><rect x="6.25" y="2" width="3.5" height="8" rx="1" fill="currentColor"/><rect x="10.75" y="2" width="3.5" height="10" rx="1" fill="currentColor"/></svg>';
+
+function injectTaskboardEntryStyles(): void {
+  if (document.getElementById("dsh-taskboard-entry-styles")) return;
+  const style = document.createElement("style");
+  style.id = "dsh-taskboard-entry-styles";
+  style.textContent = [
+    ".dsh-taskboard-entry{display:flex;align-items:center;gap:8px;position:relative;",
+    "width:calc(100% - 8px);margin:2px 4px;padding:6px 10px;border:none;border-radius:8px;",
+    "background:transparent;color:var(--dsw-text-secondary,inherit);font:inherit;font-size:13px;",
+    "cursor:pointer;text-align:left;}",
+    ".dsh-taskboard-entry:hover{background:var(--dsw-hover,rgba(128,128,128,.12));color:var(--dsw-text-primary,inherit);}",
+    ".dsh-taskboard-entry svg{flex:none;}",
+    ".dsh-taskboard-entry-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
+  ].join("");
+  document.head.append(style);
+}
+
+function findSidebarRoot(): HTMLElement | undefined {
+  const column = document.querySelector('[data-pane="sidebar"], [class*="sidebarCol"]');
+  if (!(column instanceof HTMLElement)) return undefined;
+  const logoOwner = column.querySelector('[class*="logoRow"]')?.parentElement;
+  if (logoOwner instanceof HTMLElement) return logoOwner;
+  return column.firstElementChild instanceof HTMLElement ? column.firstElementChild : undefined;
+}
+
+function findNewSessionButton(root: HTMLElement): HTMLButtonElement | undefined {
+  const nested = root.querySelector('button[class*="newSession"]');
+  if (nested instanceof HTMLButtonElement) return nested;
+  for (const child of root.children) if (child instanceof HTMLButtonElement) return child;
+  const byAria = root.querySelector(
+    'button[aria-label="新建会话"], button[aria-label="New Session"], button[aria-label*="新会话"], button[aria-label*="new session" i]',
+  );
+  if (byAria instanceof HTMLButtonElement) return byAria;
+  return Array.from(root.querySelectorAll("button")).find((button) =>
+    /新会话|新建会话|new session/i.test(button.textContent ?? ""),
+  ) as HTMLButtonElement | undefined;
+}
+
+/** 挂载任务看板侧栏入口，返回清理函数。 */
+function mountTaskboardEntry(ctx: any): () => void {
+  injectTaskboardEntryStyles();
+  const entry = document.createElement("button");
+  entry.type = "button";
+  entry.dataset.dshTaskboardEntry = "";
+  entry.className = "dsh-taskboard-entry";
+  entry.setAttribute("aria-label", "Taskboard");
+  entry.innerHTML =
+    `<span class="dsh-taskboard-entry-icon">${TASKBOARD_ICON_SVG}</span>` +
+    '<span class="dsh-taskboard-entry-label">Taskboard</span>';
+  entry.addEventListener("click", () => openTaskboardView(ctx));
+
+  let root: HTMLElement | undefined;
+  let placed = false;
+
+  const anchorOf = (): HTMLElement | undefined => {
+    if (root === undefined) return undefined;
+    const apps = root.querySelector<HTMLElement>(APPS_ENTRY_SELECTOR);
+    if (apps !== null) return apps;
+    return findNewSessionButton(root);
+  };
+
+  const place = (): boolean => {
+    root ??= findSidebarRoot();
+    if (root === undefined) return false;
+    const anchor = anchorOf();
+    if (anchor === undefined) return false;
+    if (entry.parentElement === root && entry.previousElementSibling === anchor) return true;
+    const next = anchor.nextElementSibling;
+    root.insertBefore(entry, next === entry ? entry.nextElementSibling : next);
+    return true;
+  };
+
+  const tryPlace = (): void => {
+    if (root !== undefined && !root.isConnected) {
+      rootObserver.disconnect();
+      root = undefined;
+      placed = false;
+    }
+    if (placed && !document.body.contains(entry)) {
+      rootObserver.disconnect();
+      root = undefined;
+      placed = false;
+    }
+    placed = place();
+    if (placed && root !== undefined) rootObserver.observe(root, { childList: true, subtree: true });
+  };
+
+  const waitObserver = new MutationObserver(tryPlace);
+  waitObserver.observe(document.body, { childList: true, subtree: true });
+
+  const rootObserver = new MutationObserver(() => {
+    if (root === undefined || !root.isConnected) {
+      placed = false;
+      tryPlace();
+      return;
+    }
+    const anchor = anchorOf();
+    if (!root.contains(entry) || (anchor !== undefined && entry.previousElementSibling !== anchor)) {
+      placed = place();
+    }
+  });
+
+  const retry = setInterval(tryPlace, 2000);
+  tryPlace();
+
+  return () => {
+    clearInterval(retry);
+    waitObserver.disconnect();
+    rootObserver.disconnect();
+    entry.remove();
+  };
 }
 
 /**
@@ -527,18 +566,6 @@ export function apply(ctx: any) {
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, "taskboard: hide conversation view tab");
-  // 侧栏底部快捷入口（ui-sidebar 的 sidebar.footer.action 插槽，cordis-panel 同款；kind: list, scope: root）：
-  // SidebarRoot 的 footArea 先渲染 footer.action 再渲染 settings，本入口自然位于 Settings 按钮上方。
-  // 纯快捷方式（图标+文字）：点击把当前会话切到看板主区视图；收起轨道图标点击先展开侧栏再切换。
-  ctx.slots.inject("sidebar.footer.action", () =>
-    ctx.slots.register(
-      { name: "sidebar.footer.action", id: "taskboard", order: 10, label: () => "Taskboard" },
-      (props: { wide?: boolean }) =>
-        createElement(TaskboardSidebarEntry, {
-          wide: props?.wide,
-          onOpen: () => openTaskboardView(ctx),
-          onExpandRail: () => ctx.layout.toggleSidebar(),
-        }),
-    ),
-  );
+  // 侧栏入口挂到「新会话下方」（应用入口之后），替代底部 footer.action（OmniMux 布局需求）。
+  ctx.effect(() => mountTaskboardEntry(ctx), "taskboard: sidebar entry under new session");
 }
