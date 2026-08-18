@@ -20,12 +20,14 @@ export const PRODUCT_STAGE_CHROME = [
   'html:not([data-dsh-product-stage]) [class*="toggleCluster"],',
   'html:not([data-dsh-product-stage]) [class*="toggleCluster"] *{pointer-events:auto!important;z-index:300!important;}',
   'html[data-dsh-product-stage] [class*="toggleCluster"]{display:none!important;}',
+  'html[data-dsh-product-stage] #dsh-window-drag{-webkit-app-region:no-drag!important;pointer-events:none!important;}',
+  'html[data-dsh-product-stage] header{-webkit-app-region:no-drag!important;}',
 ].join("");
 
 export function ensureProductStageChrome(): void {
   const existing = document.getElementById("dsh-product-stage-chrome");
   if (existing instanceof HTMLStyleElement) {
-    if (!existing.textContent?.includes("pointer-events:none")) existing.textContent = PRODUCT_STAGE_CHROME;
+    if (!existing.textContent?.includes("dsh-window-drag")) existing.textContent = PRODUCT_STAGE_CHROME;
     return;
   }
   const style = document.createElement("style");
