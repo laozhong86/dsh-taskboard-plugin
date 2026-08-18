@@ -303,7 +303,7 @@ function TaskboardStage(props: {
         pointerEvents: "auto",
         display: "flex",
         flexDirection: "column",
-        padding: "56px 0 0",
+        padding: "12px 0 0",
         boxSizing: "border-box",
         background: tokens.bgBase,
         color: tokens.labelPrimary,
